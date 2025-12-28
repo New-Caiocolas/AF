@@ -1,113 +1,101 @@
 
-import { UserProfile, AssetCategory, Asset, Transaction } from '../types';
+import { 
+  collection, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  onSnapshot, 
+  query, 
+  where, 
+  addDoc, 
+  deleteDoc, 
+  updateDoc,
+  Timestamp,
+  collectionGroup
+} from "firebase/firestore";
+import { db } from "./firebase";
+import { Asset, Transaction, UserProfile, AssetCategory } from "../types";
 
-const STORAGE_KEY = 'gem_user_data_v4';
-
-const INITIAL_USER: UserProfile = {
-  id: 'user_1',
-  name: 'Investor Pro',
-  email: 'investor@gemhub.ai',
-  riskProfile: 'arrojado',
-  preferredCurrency: 'BRL',
-  wallet: [
-    {
-      id: 'wa_1',
-      ticker: 'BTC',
-      category: AssetCategory.CRYPTO,
-      sector: 'Ouro Digital',
-      averagePrice: 42000,
-      totalQuantity: 0.15,
-      currentPrice: 65400,
-      dailyChange: 2.5,
-      transactions: [
-        { id: 'tx_1', type: 'buy', quantity: 0.1, price: 40000, fees: 5, date: '2024-05-10', source: 'new_money' },
-        { id: 'tx_2', type: 'buy', quantity: 0.05, price: 46000, fees: 8, date: '2024-06-15', source: 'new_money' }
-      ]
-    },
-    {
-      id: 'wa_2',
-      ticker: 'MXRF11',
-      category: AssetCategory.FII,
-      sector: 'Papel',
-      averagePrice: 9.85,
-      totalQuantity: 1200,
-      currentPrice: 10.42,
-      dailyChange: 0.2,
-      provDividend: 12.50,
-      transactions: [
-        { id: 'tx_3', type: 'buy', quantity: 1200, price: 9.85, fees: 0, date: '2024-04-20', source: 'new_money' }
-      ]
-    }
-  ]
-};
-
-export const db = {
-  getUser: (): UserProfile => {
-    const data = localStorage.getItem(STORAGE_KEY);
-    return data ? JSON.parse(data) : INITIAL_USER;
+export const dbService = {
+  // Subscribes to real-time wallet changes
+  subscribeToWallet: (uid: string, callback: (assets: Asset[]) => void) => {
+    const q = collection(db, `users/${uid}/assets`);
+    return onSnapshot(q, (snapshot) => {
+      const assets = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as Asset[];
+      callback(assets);
+    });
   },
 
-  saveUser: (user: UserProfile) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+  // Subscribes to real-time transaction history
+  subscribeToTransactions: (uid: string, callback: (txs: Transaction[]) => void) => {
+    const q = collection(db, `users/${uid}/transactions`);
+    return onSnapshot(q, (snapshot) => {
+      const txs = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        date: doc.data().date?.toDate ? doc.data().date.toDate().toISOString() : doc.data().date
+      })) as Transaction[];
+      callback(txs.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    });
   },
 
-  addTransaction: (userId: string, ticker: string, tx: Omit<Transaction, 'id'>): UserProfile => {
-    const user = db.getUser();
-    const assetIndex = user.wallet.findIndex(a => a.ticker === ticker);
-    const newTx = { ...tx, id: Math.random().toString(36).substr(2, 9) };
+  // Adds a transaction and updates the asset document (Cloud function logic alternative for client)
+  registerTransaction: async (uid: string, ticker: string, tx: Omit<Transaction, 'id'>, category: AssetCategory) => {
+    // 1. Add Transaction to sub-collection
+    const txRef = await addDoc(collection(db, `users/${uid}/transactions`), {
+      ...tx,
+      ticker,
+      category,
+      date: Timestamp.fromDate(new Date(tx.date))
+    });
 
-    if (assetIndex > -1) {
-      const asset = user.wallet[assetIndex];
-      asset.transactions.push(newTx);
-      
-      // Re-calculate averages and totals
+    // 2. Update/Create Asset Summary (Denormalized for performance as per MongoDB/Firestore spec)
+    const assetRef = doc(db, `users/${uid}/assets`, ticker);
+    const assetSnap = await getDoc(assetRef);
+
+    if (assetSnap.exists()) {
+      const current = assetSnap.data() as Asset;
+      let newQty = current.totalQuantity;
+      let newAvgPrice = current.averagePrice;
+
       if (tx.type === 'buy') {
-        const totalCost = (asset.averagePrice * asset.totalQuantity) + (tx.price * tx.quantity) + tx.fees;
-        asset.totalQuantity += tx.quantity;
-        asset.averagePrice = totalCost / asset.totalQuantity;
+        const totalCost = (current.averagePrice * current.totalQuantity) + (tx.price * tx.quantity) + tx.fees;
+        newQty += tx.quantity;
+        newAvgPrice = totalCost / newQty;
       } else if (tx.type === 'sell') {
-        asset.totalQuantity = Math.max(0, asset.totalQuantity - tx.quantity);
+        newQty = Math.max(0, current.totalQuantity - tx.quantity);
       }
-    } else {
-      // Create new asset document in wallet
-      const newAsset: Asset = {
-        id: Math.random().toString(),
-        ticker,
-        category: ticker.endsWith('11') ? AssetCategory.FII : AssetCategory.CRYPTO,
-        sector: 'Novo Ativo',
-        averagePrice: tx.price,
-        totalQuantity: tx.quantity,
-        currentPrice: tx.price,
-        dailyChange: 0,
-        transactions: [newTx]
-      };
-      user.wallet.push(newAsset);
-    }
 
-    db.saveUser(user);
-    return user;
+      await updateDoc(assetRef, {
+        totalQuantity: newQty,
+        averagePrice: newAvgPrice,
+        lastUpdate: Timestamp.now()
+      });
+    } else {
+      await setDoc(assetRef, {
+        ticker,
+        category,
+        sector: category === AssetCategory.CRYPTO ? 'Ouro Digital' : 'Imobiliário',
+        totalQuantity: tx.quantity,
+        averagePrice: tx.price,
+        currentPrice: tx.price, // Will be updated by price service
+        dailyChange: 0,
+        transactions: [], // Not used in Firestore as it's a sub-collection
+        lastUpdate: Timestamp.now()
+      });
+    }
   },
 
-  deleteTransaction: (userId: string, ticker: string, txId: string): UserProfile => {
-    const user = db.getUser();
-    const asset = user.wallet.find(a => a.ticker === ticker);
-    if (!asset) return user;
+  deleteTransaction: async (uid: string, txId: string, ticker: string) => {
+    await deleteDoc(doc(db, `users/${uid}/transactions`, txId));
+    // Note: In a production Firebase environment, a Cloud Function would trigger 
+    // to recalculate the Preço Médio in users/{uid}/assets/{ticker}.
+  },
 
-    asset.transactions = asset.transactions.filter(t => t.id !== txId);
-    
-    // Recalculate based on remaining transactions
-    const buys = asset.transactions.filter(t => t.type === 'buy');
-    if (buys.length > 0) {
-      const totalQty = buys.reduce((sum, t) => sum + t.quantity, 0);
-      const totalCost = buys.reduce((sum, t) => sum + (t.price * t.quantity) + t.fees, 0);
-      asset.totalQuantity = totalQty;
-      asset.averagePrice = totalCost / totalQty;
-    } else {
-      asset.totalQuantity = 0;
-      asset.averagePrice = 0;
-    }
-
-    db.saveUser(user);
-    return user;
+  updateUserProfile: async (uid: string, data: Partial<UserProfile>) => {
+    await updateDoc(doc(db, "users", uid), data);
   }
 };

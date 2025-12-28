@@ -1,5 +1,5 @@
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface StatCardProps {
@@ -11,23 +11,18 @@ interface StatCardProps {
 }
 
 const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, trend, loading }) => {
-  const [displayValue, setDisplayValue] = useState(value);
-
-  useEffect(() => {
-    setDisplayValue(value);
-  }, [value]);
-
   const trendColor = trend === 'up' ? 'text-emerald-400' : trend === 'down' ? 'text-rose-400' : 'text-slate-400';
 
   return (
     <motion.div 
       initial={{ opacity: 0, scale: 0.9 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="glass-card p-6 rounded-3xl group border-white/5"
+      whileHover={{ y: -5 }}
+      className="glass-card p-6 rounded-[2rem] group border-white/5 relative overflow-hidden"
     >
       <div className="flex justify-between items-start mb-4">
         <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">{label}</p>
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center bg-white/5 ${trendColor}`}>
+        <div className={`w-8 h-8 rounded-xl flex items-center justify-center bg-white/5 ${trendColor}`}>
           {trend === 'up' && <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline></svg>}
           {trend === 'down' && <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline></svg>}
           {trend === 'neutral' && <div className="w-4 h-0.5 bg-current" />}
@@ -38,15 +33,16 @@ const StatCard: React.FC<StatCardProps> = ({ label, value, subValue, trend, load
         <div className="h-8 w-32 bg-slate-800/50 animate-pulse rounded" />
       ) : (
         <div className="relative">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="popLayout">
             <motion.h3 
               key={value}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 15 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="text-2xl font-black font-mono tracking-tighter"
+              exit={{ opacity: 0, y: -15 }}
+              transition={{ type: "spring", stiffness: 300, damping: 25 }}
+              className="text-2xl font-black font-mono tracking-tighter text-white"
             >
-              {displayValue}
+              {value}
             </motion.h3>
           </AnimatePresence>
           {subValue && (

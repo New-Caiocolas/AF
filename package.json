@@ -15,7 +15,8 @@
     "react-dom": "^19.2.3",
     "framer-motion": "^11.0.0",
     "clsx": "^2.1.0",
-    "tailwind-merge": "^2.2.0"
+    "tailwind-merge": "^2.2.0",
+    "firebase": "^12.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
