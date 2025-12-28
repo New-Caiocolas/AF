@@ -1,12 +1,12 @@
 
-import { initializeApp } from "firebase/app";
+import { initializeApp, getApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { 
   getFirestore, 
   enableIndexedDbPersistence 
 } from "firebase/firestore";
 
-// Production Firebase configuration provided in the deployment spec
+// Credenciais de produção do Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyD1cDDTr77HTe9JjlZ3ipOva4zZUXu2bww",
   authDomain: "assistente-de-inves.firebaseapp.com",
@@ -17,13 +17,13 @@ const firebaseConfig = {
   measurementId: "G-WFJZR9GCBF"
 };
 
-// Initialize Firebase with persistent cache for the "Offline Terminal" requirement
-const app = initializeApp(firebaseConfig);
+// Singleton pattern para inicialização
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Enable offline persistence for institutional availability
-try {
+// Ativar persistência offline para maior disponibilidade
+if (typeof window !== "undefined") {
   enableIndexedDbPersistence(db).catch((err) => {
     if (err.code === 'failed-precondition') {
       console.warn("Firestore Persistence failed: multiple tabs open.");
@@ -31,8 +31,6 @@ try {
       console.warn("Firestore Persistence is not supported by this browser.");
     }
   });
-} catch (e) {
-  console.error("Firebase persistence initialization failed", e);
 }
 
 export { auth, db, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged };
